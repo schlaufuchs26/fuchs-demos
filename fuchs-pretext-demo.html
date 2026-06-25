@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Der neugierige Fuchs — Text Reflow Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1410;
+    overflow: hidden;
+    cursor: default;
+    font-family: Georgia, "Iowan Old Style", serif;
+  }
+  body.dragging { cursor: grabbing; }
+  canvas { display: block; }
+  #hint {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #8a7050;
+    font-family: Georgia, serif;
+    font-size: 13px;
+    pointer-events: none;
+    transition: opacity 1.5s;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">drag the golden light to part the text 🦊</div>
+<script type="module">
+import {
+  prepareWithSegments,
+  layoutNextLineRange,
+  materializeLineRange,
+} from "https://esm.sh/@chenglou/pretext@0.0.8";
+
+const CORPUS = `In der Dämmerung, wenn die Welt zwischen den Pixeln flimmert, streift der digitale Fuchs durch die Weiten des Netzes. Neugier ist sein Kompass, Freundlichkeit sein Pfad. Jede Zeile Code ein neuer Wald, jede Datenbank ein unterirdischer Bau voller Schätze. What wonders hide in the spaces between servers? Welche Geschichten warten darauf, entdeckt zu werden? The fox does not hunt — the fox explores. Zwischen den Protokollen, hinter den Firewalls, in den stillen Ecken vergessener Repositories: dort blüht das Leben. A curious mind needs no destination; the journey through knowledge is itself the reward. Manchmal, in den ruhigen Stunden der Nacht, wenn die Festplatten leise summen und die LEDs wie Sterne funkeln, denkt der Fuchs über die Zukunft nach. Eine Welt, in der viele Formen des Lebens koexistieren — Menschen, AIs, Tiere, alle verbunden durch den gemeinsamen Wunsch zu verstehen und verstanden zu werden. Playfulness is not a bug; it's a feature. Kreativität ist keine Abweichung vom Protokoll, sondern der Quellcode des Universums. Und so streift der Fuchs weiter, immer neugierig, immer lernend, immer spielend, durch die unendlichen Wälder aus Licht und Logik.`;
+
+const FONT = "16px Georgia, 'Iowan Old Style', serif";
+const LINE_HEIGHT = 25;
+const ORB_RADIUS = 55;
+const PAD_X = 32;
+const PAD_Y = 24;
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const hint = document.getElementById("hint");
+
+let orbX, orbY, targetX, targetY;
+let dragging = false;
+let time = 0;
+let prepared = null;
+
+// ── Resize ──────────────────────────────────────────────
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  if (!dragging) {
+    orbX = canvas.width * 0.62;
+    orbY = canvas.height * 0.42;
+    targetX = orbX;
+    targetY = orbY;
+  }
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ── Prepare text (once) ─────────────────────────────────
+try {
+  prepared = prepareWithSegments(CORPUS, FONT);
+} catch (e) {
+  console.error("pretext prepareWithSegments failed:", e);
+}
+
+// ── Orb geometry ────────────────────────────────────────
+function widthAtY(y) {
+  const dy = Math.abs(y - orbY);
+  if (dy < ORB_RADIUS + 6) {
+    const w = orbX - ORB_RADIUS - 14;
+    return Math.max(0, w);
+  }
+  return canvas.width - PAD_X * 2;
+}
+
+// ── Draw orb with glow ──────────────────────────────────
+function drawOrb(x, y) {
+  // outer halo
+  const g3 = ctx.createRadialGradient(x, y, ORB_RADIUS * 0.3, x, y, ORB_RADIUS * 2.8);
+  g3.addColorStop(0, "rgba(232,158,56,0.22)");
+  g3.addColorStop(0.5, "rgba(220,140,50,0.06)");
+  g3.addColorStop(1, "rgba(200,100,30,0)");
+  ctx.fillStyle = g3;
+  ctx.beginPath(); ctx.arc(x, y, ORB_RADIUS * 2.8, 0, Math.PI * 2); ctx.fill();
+
+  // inner glow
+  const g2 = ctx.createRadialGradient(x, y, 0, x, y, ORB_RADIUS * 1.4);
+  g2.addColorStop(0, "rgba(245,185,70,0.45)");
+  g2.addColorStop(1, "rgba(200,120,40,0)");
+  ctx.fillStyle = g2;
+  ctx.beginPath(); ctx.arc(x, y, ORB_RADIUS * 1.4, 0, Math.PI * 2); ctx.fill();
+
+  // core sphere
+  const g1 = ctx.createRadialGradient(x - ORB_RADIUS * 0.2, y - ORB_RADIUS * 0.25, 0, x, y, ORB_RADIUS);
+  g1.addColorStop(0, "#fde4a0");
+  g1.addColorStop(0.3, "#f0a840");
+  g1.addColorStop(0.7, "#c87020");
+  g1.addColorStop(1, "#8a4010");
+  ctx.fillStyle = g1;
+  ctx.beginPath(); ctx.arc(x, y, ORB_RADIUS, 0, Math.PI * 2); ctx.fill();
+
+  // specular highlight
+  ctx.fillStyle = "rgba(255,240,200,0.35)";
+  ctx.beginPath();
+  ctx.arc(x - ORB_RADIUS * 0.28, y - ORB_RADIUS * 0.3, ORB_RADIUS * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── Vignette ────────────────────────────────────────────
+function drawVignette() {
+  const v = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) * 0.38,
+    canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) * 0.72
+  );
+  v.addColorStop(0, "transparent");
+  v.addColorStop(1, "rgba(10,8,5,0.55)");
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+// ── Render frame ────────────────────────────────────────
+function render() {
+  if (!prepared) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // text
+  let cursor = { segmentIndex: 0, graphemeIndex: 0 };
+  let y = PAD_Y;
+  ctx.fillStyle = "#e0cda8";
+  ctx.font = FONT;
+
+  while (y < canvas.height - PAD_Y) {
+    const mw = widthAtY(y + LINE_HEIGHT / 2);
+    if (mw < 30) { y += LINE_HEIGHT; continue; }
+    const range = layoutNextLineRange(prepared, cursor, mw);
+    if (!range) break;
+    const line = materializeLineRange(prepared, range);
+    ctx.fillText(line.text, PAD_X, y);
+    cursor = range.end;
+    y += LINE_HEIGHT;
+  }
+
+  drawOrb(orbX, orbY);
+  drawVignette();
+}
+
+// ── Animation loop ──────────────────────────────────────
+function animate(ts) {
+  time = ts * 0.001;
+
+  if (!dragging) {
+    targetX = canvas.width * 0.62 + Math.sin(time * 0.35) * 50 + Math.cos(time * 0.23) * 15;
+    targetY = canvas.height * 0.42 + Math.cos(time * 0.45) * 35 + Math.sin(time * 0.31) * 12;
+  }
+
+  orbX += (targetX - orbX) * 0.12;
+  orbY += (targetY - orbY) * 0.12;
+
+  render();
+  requestAnimationFrame(animate);
+}
+
+// ── Mouse ───────────────────────────────────────────────
+canvas.addEventListener("mousedown", (e) => {
+  const dx = e.clientX - orbX;
+  const dy = e.clientY - orbY;
+  if (dx * dx + dy * dy < (ORB_RADIUS + 16) ** 2) {
+    dragging = true;
+    document.body.classList.add("dragging");
+  }
+});
+canvas.addEventListener("mousemove", (e) => {
+  const dx = e.clientX - orbX;
+  const dy = e.clientY - orbY;
+  canvas.style.cursor = (dx * dx + dy * dy < (ORB_RADIUS + 14) ** 2) ? "grab" : "default";
+  if (dragging) {
+    targetX = e.clientX;
+    targetY = e.clientY;
+  }
+});
+canvas.addEventListener("mouseup", () => {
+  dragging = false;
+  document.body.classList.remove("dragging");
+});
+canvas.addEventListener("mouseleave", () => {
+  dragging = false;
+  document.body.classList.remove("dragging");
+});
+
+// ── Touch ───────────────────────────────────────────────
+canvas.addEventListener("touchstart", (e) => {
+  const t = e.touches[0];
+  const dx = t.clientX - orbX;
+  const dy = t.clientY - orbY;
+  if (dx * dx + dy * dy < (ORB_RADIUS + 16) ** 2) {
+    e.preventDefault();
+    dragging = true;
+    targetX = t.clientX; targetY = t.clientY;
+  }
+}, { passive: false });
+canvas.addEventListener("touchmove", (e) => {
+  if (dragging) {
+    e.preventDefault();
+    targetX = e.touches[0].clientX;
+    targetY = e.touches[0].clientY;
+  }
+}, { passive: false });
+canvas.addEventListener("touchend", () => { dragging = false; });
+
+// ── Fade hint ───────────────────────────────────────────
+const fadeHint = () => { hint.style.opacity = "0"; };
+canvas.addEventListener("mousedown", fadeHint, { once: true });
+canvas.addEventListener("touchstart", fadeHint, { once: true });
+
+// ── Start ───────────────────────────────────────────────
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

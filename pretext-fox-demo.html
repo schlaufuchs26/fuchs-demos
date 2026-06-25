@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Schlaufuchs · text around a fox</title>
+<style>
+  html,body { margin:0; padding:0; height:100%; background:#0a0a14; color:#e0ddd4; overflow:hidden; }
+  body { font-family: "Iowan Old Style", Georgia, serif; cursor: none; }
+  canvas { display:block; width:100vw; height:100vh; }
+  #custom-cursor {
+    position: fixed; pointer-events: none; z-index: 99;
+    font-size: 32px; transform: translate(-50%, -50%);
+    transition: opacity 0.15s;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="custom-cursor">🦊</div>
+<script type="module">
+import {
+  prepareWithSegments,
+  layoutNextLineRange,
+  materializeLineRange,
+} from "https://esm.sh/@chenglou/pretext@0.0.6";
+
+const TEXT = (
+  "The fox does not measure the forest in meters but in moments — a rustle here, "
+  + "a scent there, the sudden hush before a rabbit bolts. Every creature leaves traces, "
+  + "and the fox reads them all: the smudge of a wing in dust, the faint crack of a twig, "
+  + "the story written in the snow. To be curious is to be a fox. It means following the "
+  + "strange shape on the horizon not because you must, but because the unknown is beautiful "
+  + "and the world is wide and nothing sharpens the senses like the question: what lies "
+  + "beyond that ridge? At dusk the fox sits on a hilltop watching the stars emerge, "
+  + "one by one, each a question mark in the dark. There are no wrong answers in the forest, "
+  + "only paths not yet taken. The fox knows this. The fox has always known. So it runs — "
+  + "not away from anything, but toward everything. Toward the flicker of fireflies in the "
+  + "meadow, toward the call of a distant owl, toward the horizon that keeps receding "
+  + "because it was never a place at all but a direction: outward, onward, into the "
+  + "possibility of things. This is what it means to be a fox. Not cleverness, not cunning — "
+  + "though those are useful. What matters is the running. The joy of motion through a world "
+  + "that never stops being new. "
+).repeat(5);
+
+const FONT = '18px/1.5 "Iowan Old Style", Georgia, serif';
+const LINE_H = 26;
+
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+const cursorEl = document.getElementById("custom-cursor");
+
+let W, H, DPR;
+function resize() {
+  DPR = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  c.width = W*DPR; c.height = H*DPR;
+  c.style.width = W+"px"; c.style.height = H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+addEventListener("resize", resize); resize();
+
+const prepared = prepareWithSegments(TEXT, FONT);
+
+// Fox position — follows mouse, with smooth interpolation
+const fox = { x: W*0.45, y: H*0.5, tx: W*0.45, ty: H*0.5, r: 145 };
+addEventListener("mousemove", e => {
+  fox.tx = e.clientX; fox.ty = e.clientY;
+});
+
+// Stars — static twinklers
+const stars = [];
+for (let i = 0; i < 120; i++) {
+  stars.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    r: Math.random() * 1.8 + 0.4,
+    p: Math.random() * Math.PI * 2,
+    s: 0.5 + Math.random() * 0.5,
+  });
+}
+
+// Fireflies — wandering points
+const fireflies = [];
+for (let i = 0; i < 28; i++) {
+  fireflies.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    vx: (Math.random() - 0.5) * 0.6,
+    vy: (Math.random() - 0.5) * 0.6,
+    r: 1.5 + Math.random() * 2.5,
+    p: Math.random() * Math.PI * 2,
+  });
+}
+
+// Draw a simple fox face at (cx, cy) with radius s
+function drawFox(cx, cy, s) {
+  const headR = s * 0.65;
+  const earH = s * 0.55;
+  const earW = s * 0.3;
+  const snoutW = s * 0.22;
+  const snoutH = s * 0.2;
+
+  // Soft orange glow behind fox
+  const bg = ctx.createRadialGradient(cx, cy, headR*0.3, cx, cy, s);
+  bg.addColorStop(0, "rgba(255,170,80,0.12)");
+  bg.addColorStop(1, "rgba(255,120,40,0)");
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.arc(cx, cy, s, 0, Math.PI*2); ctx.fill();
+
+  // Ears — tall triangles
+  ctx.fillStyle = "#e8893a";
+  ctx.beginPath();
+  ctx.moveTo(cx - earW, cy - headR*0.3);
+  ctx.lineTo(cx - earW*1.3, cy - headR - earH);
+  ctx.lineTo(cx - earW*0.2, cy - headR);
+  ctx.closePath(); ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(cx + earW, cy - headR*0.3);
+  ctx.lineTo(cx + earW*1.3, cy - headR - earH);
+  ctx.lineTo(cx + earW*0.2, cy - headR);
+  ctx.closePath(); ctx.fill();
+
+  // Inner ears — darker
+  ctx.fillStyle = "#b85c28";
+  ctx.beginPath();
+  ctx.moveTo(cx - earW*0.5, cy - headR*0.5);
+  ctx.lineTo(cx - earW*1.05, cy - headR - earH*0.8);
+  ctx.lineTo(cx - earW*0.1, cy - headR*0.85);
+  ctx.closePath(); ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(cx + earW*0.5, cy - headR*0.5);
+  ctx.lineTo(cx + earW*1.05, cy - headR - earH*0.8);
+  ctx.lineTo(cx + earW*0.1, cy - headR*0.85);
+  ctx.closePath(); ctx.fill();
+
+  // Head — rounded
+  ctx.fillStyle = "#e8893a";
+  ctx.beginPath(); ctx.arc(cx, cy, headR, 0, Math.PI*2); ctx.fill();
+
+  // White cheeks / muzzle area
+  ctx.fillStyle = "#f5eee0";
+  ctx.beginPath(); ctx.ellipse(cx, cy + headR*0.25, headR*0.55, headR*0.42, 0, 0, Math.PI*2); ctx.fill();
+
+  // Snout tip — darker
+  ctx.fillStyle = "#3a2a1a";
+  ctx.beginPath(); ctx.ellipse(cx, cy + headR*0.35, snoutW, snoutH, 0, 0, Math.PI*2); ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = "#1a140a";
+  ctx.beginPath(); ctx.arc(cx - headR*0.3, cy - headR*0.15, headR*0.1, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + headR*0.3, cy - headR*0.15, headR*0.1, 0, Math.PI*2); ctx.fill();
+
+  // Eye highlights
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.arc(cx - headR*0.33, cy - headR*0.2, headR*0.035, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + headR*0.27, cy - headR*0.2, headR*0.035, 0, Math.PI*2); ctx.fill();
+}
+
+// Compute the obstacle radius at a given y (in fox-local coords)
+// The fox is drawn inside `fox.r` — we treat it as roughly circular for flow,
+// but use a slightly smaller radius to keep text from clipping the drawing.
+function foxRadiusAtY(dy) {
+  // Use an ellipse slightly taller than wide for the fox shape
+  const ry = fox.r * 0.82;
+  const rx = fox.r * 0.85;
+  if (Math.abs(dy) >= ry) return null;
+  const frac = dy / ry;
+  return rx * Math.sqrt(1 - frac * frac);
+}
+
+function frame(t) {
+  // Smooth fox movement
+  fox.x += (fox.tx - fox.x) * 0.08;
+  fox.y += (fox.ty - fox.y) * 0.08;
+
+  // Background
+  ctx.fillStyle = "#0a0a14"; ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (const s of stars) {
+    const brightness = 0.25 + 0.25 * Math.sin(t * 0.001 * s.s + s.p);
+    ctx.fillStyle = `rgba(255,250,235,${brightness})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Subtle vignette
+  const vignette = ctx.createRadialGradient(W/2, H/2, W*0.4, W/2, H/2, W*0.75);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.55)");
+  ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+
+  // Fireflies
+  for (const ff of fireflies) {
+    ff.x += ff.vx + Math.sin(t*0.003 + ff.p) * 0.3;
+    ff.y += ff.vy + Math.cos(t*0.004 + ff.p) * 0.25;
+    if (ff.x < -20) ff.x = W + 20;
+    if (ff.x > W + 20) ff.x = -20;
+    if (ff.y < -20) ff.y = H + 20;
+    if (ff.y > H + 20) ff.y = -20;
+
+    const glow = 0.4 + 0.35 * Math.sin(t * 0.005 * ff.s + ff.p);
+    const glowGrad = ctx.createRadialGradient(ff.x, ff.y, 0, ff.x, ff.y, ff.r * 3);
+    glowGrad.addColorStop(0, `rgba(255,220,140,${glow * 0.7})`);
+    glowGrad.addColorStop(1, "rgba(255,220,140,0)");
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath(); ctx.arc(ff.x, ff.y, ff.r * 3, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = `rgba(255,240,190,${glow})`;
+    ctx.beginPath(); ctx.arc(ff.x, ff.y, ff.r, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Draw the fox
+  drawFox(fox.x, fox.y, fox.r);
+
+  // Flow text around the fox
+  const COL_X = 55, COL_W = W - 110;
+  let cursor = { segmentIndex: 0, graphemeIndex: 0 };
+  let y = 56;
+  ctx.fillStyle = "#e0ddd4";
+  ctx.font = FONT;
+  ctx.textBaseline = "alphabetic";
+
+  while (y < H - 32) {
+    const dy = y - fox.y;
+    const bandRadius = foxRadiusAtY(dy);
+    const bandY = bandRadius !== null && Math.abs(dy) < fox.r * 0.85;
+
+    let x = COL_X, lineMaxW = COL_W;
+    if (bandY) {
+      const foxLeft  = fox.x - bandRadius, foxRight = fox.x + bandRadius;
+      const leftWidth  = Math.max(0, foxLeft  - COL_X);
+      const rightWidth = Math.max(0, COL_X + COL_W - foxRight);
+      if (leftWidth >= rightWidth) {
+        x = COL_X;
+        lineMaxW = leftWidth - 14;
+      } else {
+        x = foxRight + 14;
+        lineMaxW = rightWidth - 14;
+      }
+      if (lineMaxW < 35) { y += LINE_H; continue; }
+    }
+
+    const range = layoutNextLineRange(prepared, cursor, lineMaxW);
+    if (!range) break;
+    const line = materializeLineRange(prepared, range);
+    ctx.fillText(line.text, x, y);
+    cursor = range.end;
+    y += LINE_H;
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
