@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbital Reflow</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0f; }
+  canvas { display: block; }
+  body { cursor: default; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import {
+  prepareWithSegments,
+  layoutNextLineRange,
+  materializeLineRange,
+} from "https://esm.sh/@chenglou/pretext@0.0.8";
+
+// --- Canvas setup ---
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth * devicePixelRatio;
+  H = canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// --- Font ---
+const FONT = "17px 'Iowan Old Style', 'Georgia', serif";
+ctx.font = FONT;
+const LINE_HEIGHT = 26;
+const MARGIN = 40;
+
+// --- Text corpus (excerpt from Simon Willison's Datasette Apps post) ---
+const CORPUS = [
+  "Datasette Apps are self-contained HTML and JavaScript applications that run in a tightly constrained iframe sandbox hosted on your Datasette application. They can use JavaScript to run read-only SQL queries against data in Datasette, and can run write queries too if you configure them with some stored queries.",
+  "Since the very first release, Datasette has offered a flexible backend for creating custom HTML apps via its JSON API. One of my earliest Datasette projects was an internal search engine for documentation when I worked at Eventbrite.",
+  "I had client-side JavaScript constructing SQL queries, which originally was intended as an engineering joke but turned out to be a really productive way of iterating on the app.",
+  "Datasette is growing beyond its origins as an application for serving read-only data into a much richer ecosystem of tools for doing useful things with that data once it has been collected. Datasette's roots are in data journalism.",
+  "Imagine how much more useful Claude Artifacts could be if they had access to a persistent relational database. That's what I'm building with Datasette Apps. The sandboxed pattern is interesting for way more than just adding custom apps in a chat interface.",
+  "The iframe sandbox and Content Security Policy headers make this feasible. The magic combination is sandbox allow-scripts plus a meta http-equiv CSP header. Once set, the CSP policy is immutable for the content of that frame.",
+  "Datasette Apps started life back in April as datasette-agent-artifacts. That first prototype was mainly built using Claude Opus 4.6 in Claude Code. Most of the work that followed stuck with Codex, with GPT-5.5 helping me port to a MessageChannel based transport.",
+  "MessageChannel has the advantage that if a page navigates to somewhere else the channel closes automatically, removing any chance of executing commands sent from an untrusted external page. I believe in defense in depth.",
+  "Users can create a stored write query that performs an insert or update, then allow-list that specific query for an app to use. The goal is to support full read-write applications built safely as Datasette Apps.",
+  "I've reviewed Datasette Apps extremely closely, especially the security-adjacent parts. The critical sandbox and CSP configuration are based on multiple AI-assisted prototypes and tests. It's looking good so far.",
+  "These self-contained apps are the perfect shape to be written by a modern LLM. The create app form includes a copyable prompt that has everything a model needs to know, including the schema of any selected databases.",
+  "SQL queries are also visibly logged. Those errors are captured and transmitted back to the parent frame, where they can be displayed in a useful error log. This is meant to make hacking on apps more productive by surfacing otherwise invisible problems.",
+].join(" ");
+
+const prepared = prepareWithSegments(CORPUS, FONT);
+
+// --- Stars ---
+const stars = [];
+for (let i = 0; i < 250; i++) {
+  stars.push({
+    x: Math.random() * 2000,
+    y: Math.random() * 2000,
+    r: Math.random() * 1.8 + 0.2,
+    twinkle: Math.random() * Math.PI * 2,
+    speed: 0.004 + Math.random() * 0.015,
+  });
+}
+
+// --- Orbs ---
+const orbs = [
+  { x: 0.65, y: 0.30, r: 64, dx: 0.12, dy: 0.08, hue: 35,  dragging: false },
+  { x: 0.28, y: 0.55, r: 48, dx: -0.09, dy: 0.11, hue: 200, dragging: false },
+  { x: 0.78, y: 0.65, r: 56, dx: 0.06, dy: -0.13, hue: 345, dragging: false },
+  { x: 0.42, y: 0.25, r: 40, dx: -0.14, dy: -0.07, hue: 130, dragging: false },
+  { x: 0.55, y: 0.78, r: 52, dx: 0.10, dy: -0.05, hue: 275, dragging: false },
+];
+
+// --- Mouse ---
+let mouse = { x: -100, y: -100, down: false };
+let dragOrb = null;
+
+canvas.addEventListener("mousedown", (e) => {
+  const mx = e.clientX, my = e.clientY;
+  for (const orb of orbs) {
+    const dx = mx - orb.x * window.innerWidth;
+    const dy = my - orb.y * window.innerHeight;
+    if (Math.sqrt(dx*dx + dy*dy) < orb.r + 12) {
+      dragOrb = orb;
+      orb.dragging = true;
+      orb.dx = 0; orb.dy = 0;
+      break;
+    }
+  }
+  mouse.down = true;
+});
+canvas.addEventListener("mousemove", (e) => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  if (dragOrb) {
+    dragOrb.x = e.clientX / window.innerWidth;
+    dragOrb.y = e.clientY / window.innerHeight;
+  }
+});
+canvas.addEventListener("mouseup", () => {
+  if (dragOrb) { dragOrb.dragging = false; dragOrb = null; }
+  mouse.down = false;
+});
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const mx = t.clientX, my = t.clientY;
+  for (const orb of orbs) {
+    const dx = mx - orb.x * window.innerWidth;
+    const dy = my - orb.y * window.innerHeight;
+    if (Math.sqrt(dx*dx + dy*dy) < orb.r + 12) {
+      dragOrb = orb;
+      orb.dragging = true;
+      orb.dx = 0; orb.dy = 0;
+      break;
+    }
+  }
+});
+canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  if (dragOrb) {
+    dragOrb.x = e.touches[0].clientX / window.innerWidth;
+    dragOrb.y = e.touches[0].clientY / window.innerHeight;
+  }
+});
+canvas.addEventListener("touchend", () => {
+  if (dragOrb) { dragOrb.dragging = false; dragOrb = null; }
+});
+
+// --- Width function: how wide is the corridor at a given y, given all orbs? ---
+function widthAtY(y) {
+  // By default, use full width minus margins
+  const fullW = window.innerWidth - MARGIN * 2;
+  
+  // For each orb, check if this y-row intersects it, and if so, reduce width
+  let blocked = false;
+  let leftEdge = MARGIN;
+  let rightEdge = window.innerWidth - MARGIN;
+  
+  for (const orb of orbs) {
+    const oy = orb.y * window.innerHeight;
+    const ox = orb.x * window.innerWidth;
+    const r = orb.r + 14; // padding around orb
+    
+    if (Math.abs(y - oy) < r) {
+      const halfChord = Math.sqrt(r * r - (y - oy) * (y - oy));
+      const orbLeft = ox - halfChord;
+      const orbRight = ox + halfChord;
+      
+      // If text would start left of orb, constrain right edge
+      if (leftEdge < orbLeft && orbLeft < rightEdge) {
+        rightEdge = Math.min(rightEdge, orbLeft);
+      }
+      // If there's space on the right side too, create a second corridor
+      // For simplicity: text flows on whichever side has more room
+      const leftSpace = orbLeft - leftEdge;
+      const rightSpace = rightEdge - orbRight;
+      
+      if (leftSpace > rightSpace && leftSpace > 100) {
+        rightEdge = orbLeft;
+      } else if (rightSpace > 100) {
+        leftEdge = orbRight;
+      } else {
+        blocked = true;
+      }
+    }
+  }
+  
+  if (blocked) return 0;
+  return rightEdge - leftEdge;
+}
+
+function leftEdgeAtY(y) {
+  let leftEdge = MARGIN;
+  let rightEdge = window.innerWidth - MARGIN;
+  
+  for (const orb of orbs) {
+    const oy = orb.y * window.innerHeight;
+    const ox = orb.x * window.innerWidth;
+    const r = orb.r + 14;
+    
+    if (Math.abs(y - oy) < r) {
+      const halfChord = Math.sqrt(r * r - (y - oy) * (y - oy));
+      const orbLeft = ox - halfChord;
+      const orbRight = ox + halfChord;
+      
+      const leftSpace = orbLeft - leftEdge;
+      const rightSpace = rightEdge - orbRight;
+      
+      if (leftSpace > rightSpace && leftSpace > 100) {
+        rightEdge = orbLeft;
+      } else if (rightSpace > 100) {
+        leftEdge = orbRight;
+      }
+    }
+  }
+  
+  return leftEdge;
+}
+
+// --- Glow cache ---
+const glowCache = new Map();
+
+function getGlow(radius) {
+  if (glowCache.has(radius)) return glowCache.get(radius);
+  const size = radius * 2 + 60;
+  const off = document.createElement("canvas");
+  off.width = size; off.height = size;
+  const g = off.getContext("2d");
+  const cx = size / 2, cy = size / 2;
+  const grad = g.createRadialGradient(cx, cy, radius * 0.3, cx, cy, radius + 30);
+  grad.addColorStop(0, "rgba(255,180,80,0.15)");
+  grad.addColorStop(0.5, "rgba(255,120,40,0.06)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  glowCache.set(radius, off);
+  return off;
+}
+
+// --- Render ---
+let time = 0;
+
+function drawOrb(orb, t) {
+  const ox = orb.x * window.innerWidth;
+  const oy = orb.y * window.innerHeight;
+  const r = orb.r;
+  
+  // Glow
+  const glow = getGlow(r);
+  ctx.drawImage(glow, ox - glow.width/2, oy - glow.height/2);
+  
+  // Orb body
+  const grad = ctx.createRadialGradient(ox - r*0.3, oy - r*0.3, r*0.1, ox, oy, r);
+  const hsl = `hsl(${orb.hue}, 80%, ${orb.dragging ? 65 : 50}%)`;
+  const hslDark = `hsl(${orb.hue}, 60%, 15%)`;
+  grad.addColorStop(0, hsl);
+  grad.addColorStop(1, hslDark);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(ox, oy, r, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Subtle ring
+  ctx.strokeStyle = `hsl(${orb.hue}, 60%, ${orb.dragging ? 70 : 40}%)`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  // Particle glow on surface
+  if (!orb.dragging) {
+    for (let i = 0; i < 4; i++) {
+      const angle = t * (0.3 + i * 0.7) + i * 1.5;
+      const px = ox + Math.cos(angle) * r * 0.85;
+      const py = oy + Math.sin(angle) * r * 0.85;
+      ctx.fillStyle = `rgba(255,255,255,0.5)`;
+      ctx.beginPath();
+      ctx.arc(px, py, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function draw(timestamp) {
+  time = timestamp * 0.001;
+  requestAnimationFrame(draw);
+  
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  
+  // Move orbs
+  for (const orb of orbs) {
+    if (orb.dragging) continue;
+    orb.x += orb.dx * 0.008;
+    orb.y += orb.dy * 0.008;
+    if (orb.x < 0.08 || orb.x > 0.92) orb.dx *= -1;
+    if (orb.y < 0.10 || orb.y > 0.90) orb.dy *= -1;
+  }
+  
+  // Clear
+  ctx.fillStyle = "#0a0a0f";
+  ctx.fillRect(0, 0, vw, vh);
+  
+  // Stars
+  for (const s of stars) {
+    s.twinkle += s.speed;
+    const alpha = 0.35 + Math.sin(s.twinkle) * 0.35;
+    ctx.fillStyle = s.r > 1.2
+      ? `rgba(220,230,255,${alpha})`
+      : `rgba(180,195,240,${alpha})`;
+    ctx.fillRect(s.x % vw, s.y % vh, s.r, s.r);
+  }
+  
+  // Draw orbs
+  for (const orb of orbs) {
+    drawOrb(orb, time);
+  }
+  
+  // Vignette
+  const vignette = ctx.createRadialGradient(vw/2, vh/2, vw*0.4, vw/2, vh/2, vw*0.9);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.5)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, vw, vh);
+  
+  // Layout text flowing around orbs
+  ctx.font = FONT;
+  ctx.fillStyle = "rgba(220,200,170,0.85)";
+  
+  let cursor = { segmentIndex: 0, graphemeIndex: 0 };
+  let y = MARGIN;
+  
+  while (y < vh - MARGIN) {
+    const lineW = widthAtY(y);
+    if (lineW < 20) { y += LINE_HEIGHT; continue; }
+    
+    const range = layoutNextLineRange(prepared, cursor, lineW);
+    if (!range) break;
+    
+    const line = materializeLineRange(prepared, range);
+    const lx = leftEdgeAtY(y);
+    ctx.fillText(line.text, lx, y + 17);
+    cursor = range.end;
+    y += LINE_HEIGHT;
+  }
+  
+  // Cursor indicator (subtle)
+  if (!mouse.down) {
+    for (const orb of orbs) {
+      const ox = orb.x * vw;
+      const oy = orb.y * vh;
+      const dx = mouse.x - ox;
+      const dy = mouse.y - oy;
+      if (Math.sqrt(dx*dx + dy*dy) < orb.r + 12) {
+        canvas.style.cursor = "grab";
+        return;
+      }
+    }
+    canvas.style.cursor = dragOrb ? "grabbing" : "default";
+  }
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
