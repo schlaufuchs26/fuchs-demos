@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fox Dreams</title>
+  <script>p5.disableFriendlyErrors = true;</script>
+  <script src="p5.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #0a0c1a; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script>
+// === Configuration ===
+const CONFIG = {
+  seed: Math.floor(Math.random() * 99999),
+  dreamParticleCount: 80,
+  starCount: 120,
+  frameRate: 60,
+};
+
+// === Palette (HSB: H 0-360, S 0-100, B 0-100, A 0-100) ===
+const PALETTE = {
+  skyTop: [230, 60, 12],
+  skyBottom: [240, 40, 22],
+  ground: [240, 20, 8],
+  foxBody: [25, 75, 85],
+  foxBelly: [35, 25, 95],
+  foxEarInner: [20, 40, 90],
+  foxNose: [240, 10, 15],
+  dreamHues: [280, 320, 180, 30, 200, 340, 50, 160],
+  starColor: [50, 8, 98],
+};
+
+// === Global State ===
+let dreamParticles = [];
+let stars = [];
+let bgLayer;
+
+// ===== DREAM PARTICLE CLASS =====
+class DreamParticle {
+  constructor(x, y) {
+    this.reset(x, y, true);
+  }
+
+  reset(x, y, initial) {
+    this.x = x + (Math.random() - 0.5) * 60;
+    this.y = initial ? y - Math.random() * 20 : y;
+    this.homeX = x;
+    this.homeY = y;
+    this.size = Math.random() * 2.5 + 1;
+    this.hue = PALETTE.dreamHues[Math.floor(Math.random() * PALETTE.dreamHues.length)];
+    this.saturation = Math.random() * 30 + 40;
+    this.brightness = Math.random() * 30 + 70;
+    this.alpha = Math.random() * 50 + 50;
+    this.speed = Math.random() * 0.4 + 0.15;
+    this.wobbleAmp = Math.random() * 1.5 + 0.5;
+    this.wobbleFreq = Math.random() * 0.03 + 0.01;
+    this.life = 0;
+    this.maxLife = Math.random() * 300 + 200;
+    this.shape = Math.floor(Math.random() * 3);
+  }
+
+  update() {
+    this.life++;
+    if (this.life > this.maxLife) {
+      this.reset(this.homeX, this.homeY, false);
+      this.life = 0;
+    }
+
+    let t = this.life * this.wobbleFreq;
+    this.x += Math.sin(t) * this.wobbleAmp;
+    this.x += Math.cos(t * 1.7) * this.wobbleAmp * 0.6;
+    this.y -= this.speed;
+
+    let progress = this.life / this.maxLife;
+    this.alpha = (1 - progress) * 80 + 10;
+  }
+
+  display(p) {
+    p.noStroke();
+    let a = this.alpha;
+    p.fill(this.hue, this.saturation, this.brightness, a);
+
+    if (this.shape === 0) {
+      p.circle(this.x, this.y, this.size);
+    } else if (this.shape === 1) {
+      let s = this.size * 1.4;
+      p.push();
+      p.translate(this.x, this.y);
+      p.rotate(p.frameCount * 0.01);
+      p.quad(0, -s/2, s/2, 0, 0, s/2, -s/2, 0);
+      p.pop();
+    } else {
+      p.circle(this.x, this.y, this.size * 0.7);
+    }
+  }
+}
+
+// ===== STAR CLASS =====
+class Star {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.baseBrightness = Math.random() * 40 + 60;
+    this.phase = Math.random() * Math.PI * 2;
+    this.speed = Math.random() * 0.02 + 0.005;
+    this.size = Math.random() * 1.2 + 0.3;
+  }
+
+  brightness() {
+    return this.baseBrightness + Math.sin(this.phase) * 25;
+  }
+
+  update() {
+    this.phase += this.speed;
+  }
+}
+
+// ===== SETUP =====
+function setup() {
+  createCanvas(800, 800);
+  pixelDensity(1);
+  frameRate(CONFIG.frameRate);
+  colorMode(HSB, 360, 100, 100, 100);
+  randomSeed(CONFIG.seed);
+  noiseSeed(CONFIG.seed);
+
+  // Create offscreen background layer
+  bgLayer = createGraphics(width, height);
+  bgLayer.colorMode(HSB, 360, 100, 100, 100);
+  renderBackground(bgLayer);
+
+  // Create stars
+  for (let i = 0; i < CONFIG.starCount; i++) {
+    stars.push(new Star(
+      Math.random() * width,
+      Math.random() * height * 0.75
+    ));
+  }
+
+  // Create dream particles
+  let foxCX = width / 2;
+  let foxCY = height * 0.78;
+  for (let i = 0; i < CONFIG.dreamParticleCount; i++) {
+    dreamParticles.push(new DreamParticle(foxCX, foxCY));
+  }
+}
+
+// ===== RENDER BACKGROUND (static) =====
+function renderBackground(g) {
+  // Night sky gradient
+  let skyGrad = g.drawingContext.createLinearGradient(0, 0, 0, g.height * 0.82);
+  skyGrad.addColorStop(0, '#080a16');
+  skyGrad.addColorStop(0.5, '#0c0f24');
+  skyGrad.addColorStop(1, '#141838');
+  g.drawingContext.fillStyle = skyGrad;
+  g.drawingContext.fillRect(0, 0, g.width, g.height * 0.82);
+
+  // Ground silhouette
+  g.noStroke();
+  g.fill(PALETTE.ground);
+  g.beginShape();
+  g.vertex(0, g.height);
+  g.vertex(0, g.height * 0.80);
+  g.curveVertex(width * 0.15, height * 0.83);
+  g.curveVertex(width * 0.3, height * 0.79);
+  g.curveVertex(width * 0.5, height * 0.81);
+  g.curveVertex(width * 0.7, height * 0.80);
+  g.curveVertex(width * 0.85, height * 0.82);
+  g.vertex(width, g.height * 0.81);
+  g.vertex(width, g.height);
+  g.endShape(CLOSE);
+
+  // Distant grass tufts
+  g.stroke(120, 30, 18, 40);
+  g.strokeWeight(1);
+  for (let i = 0; i < 50; i++) {
+    let gx = Math.random() * width;
+    let gy = height * 0.80 + Math.random() * height * 0.04;
+    g.line(gx, gy, gx + (Math.random() - 0.5) * 8, gy - Math.random() * 6);
+  }
+
+}
+
+// ===== DRAW FOX =====
+function drawFox(p, cx, cy, breatheScale) {
+  p.push();
+  p.translate(cx, cy);
+  p.scale(breatheScale);
+
+  // Tail (wraps around body)
+  p.noStroke();
+  p.fill(PALETTE.foxBody);
+  p.beginShape();
+  p.vertex(-30, 20);
+  p.bezierVertex(-55, 10, -65, -15, -50, -35);
+  p.bezierVertex(-35, -55, -5, -50, 10, -35);
+  p.bezierVertex(25, -15, 20, 10, -5, 20);
+  p.bezierVertex(-15, 25, -25, 22, -30, 20);
+  p.endShape();
+
+  // Tail tip (white)
+  p.fill(35, 8, 98);
+  p.beginShape();
+  p.vertex(-45, -30);
+  p.bezierVertex(-55, -35, -58, -38, -50, -40);
+  p.bezierVertex(-42, -42, -38, -35, -45, -30);
+  p.endShape();
+
+  // Body
+  p.fill(PALETTE.foxBody);
+  p.ellipse(0, 10, 55, 35);
+
+  // Belly/chest (lighter)
+  p.fill(PALETTE.foxBelly);
+  p.ellipse(5, 18, 30, 20);
+
+  // Head
+  p.fill(PALETTE.foxBody);
+  p.ellipse(20, -5, 28, 24);
+
+  // Cheek/muzzle lighter area
+  p.fill(PALETTE.foxBelly);
+  p.ellipse(28, 2, 14, 11);
+
+  // Ears
+  p.fill(PALETTE.foxBody);
+  p.triangle(12, -18, 5, -38, 22, -22);
+  p.triangle(25, -15, 32, -36, 35, -15);
+
+  // Inner ears
+  p.fill(PALETTE.foxEarInner);
+  p.triangle(14, -19, 8, -33, 21, -22);
+  p.triangle(27, -16, 31, -32, 33, -16);
+
+  // Nose
+  p.fill(PALETTE.foxNose);
+  p.ellipse(33, -2, 5, 4);
+
+  // Closed eyes
+  p.noFill();
+  p.stroke(PALETTE.foxNose[0], PALETTE.foxNose[1], PALETTE.foxNose[2], 80);
+  p.strokeWeight(1.2);
+  p.arc(27, -8, 7, 4, 0.2, PI - 0.2);
+  p.strokeWeight(1);
+  p.arc(34, -6, 5, 3, 0.3, PI - 0.2);
+
+  p.pop();
+}
+
+// ===== DRAW =====
+function draw() {
+  // Static background
+  image(bgLayer, 0, 0);
+
+  // Crescent moon (upper right)
+  let mx = width * 0.78;
+  let my = height * 0.16;
+  noStroke();
+  fill(45, 15, 90);
+  circle(mx, my, 50);
+  erase();
+  circle(mx + 13, my - 3, 38);
+  noErase();
+
+  // Twinkling stars
+  for (let s of stars) {
+    s.update();
+    noStroke();
+    let b = s.brightness();
+    fill(PALETTE.starColor[0], PALETTE.starColor[1], b, b);
+    circle(s.x, s.y, s.size);
+  }
+
+  // Dream particles
+  let foxCX = width / 2;
+  let foxCY = height * 0.78;
+  for (let p of dreamParticles) {
+    p.update();
+    p.display(this);
+  }
+
+  // Breathing fox
+  let breathe = 1 + Math.sin(frameCount * 0.025) * 0.015;
+  drawFox(this, foxCX, foxCY, breathe);
+
+  // Subtle vignette
+  noStroke();
+  let vignetteGrad = drawingContext.createRadialGradient(
+    width / 2, height * 0.55, width * 0.35,
+    width / 2, height * 0.55, width * 0.8
+  );
+  vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vignetteGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
+  drawingContext.fillStyle = vignetteGrad;
+  drawingContext.fillRect(0, 0, width, height);
+}
+
+// ===== KEY HANDLER =====
+function keyPressed() {
+  if (key === 's' || key === 'S') saveCanvas('fox-dreams', 'png');
+  if (key === 'r' || key === 'R') {
+    CONFIG.seed = Math.floor(Math.random() * 99999);
+    randomSeed(CONFIG.seed);
+    noiseSeed(CONFIG.seed);
+    dreamParticles = [];
+    stars = [];
+    let foxCX = width / 2;
+    let foxCY = height * 0.78;
+    for (let i = 0; i < CONFIG.dreamParticleCount; i++) {
+      dreamParticles.push(new DreamParticle(foxCX, foxCY));
+    }
+    for (let i = 0; i < CONFIG.starCount; i++) {
+      stars.push(new Star(Math.random() * width, Math.random() * height * 0.75));
+    }
+  }
+}
+</script>
+</body>
+</html>
