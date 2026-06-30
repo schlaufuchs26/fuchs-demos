@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tectonic — Continental Drift</title>
+  <script>p5.disableFriendlyErrors = true;</script>
+  <script src="p5.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script>
+const CONFIG = {
+  seed: Math.floor(Math.random() * 99999),
+  continentCount: 4,
+  flowParticleCount: 300,
+  edgePoints: 24,
+};
+
+const PALETTE = {
+  mantleBg: '#140805',
+  mantleGlow: '#2a120a',
+  continentColors: ['#d4a853', '#c47a4a', '#8a9b6e', '#7a8a7a'],
+  continentGlow: ['#f0d090', '#e8a870', '#b8c8a0', '#a0b8a0'],
+  flowParticle: [25, 70, 90],
+  collisionParticle: '#ffe8c0',
+  ridgeLine: '#c8963e',
+};
+
+let continents = [];
+let flowParticles = [];
+let bgLayer;
+
+function preload() {}
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1);
+  randomSeed(CONFIG.seed);
+  noiseSeed(CONFIG.seed);
+  colorMode(HSB, 360, 100, 100, 100);
+  
+  bgLayer = createGraphics(width, height);
+  bgLayer.colorMode(HSB, 360, 100, 100, 100);
+  renderBackground(bgLayer);
+  
+  for (let i = 0; i < CONFIG.continentCount; i++) {
+    continents.push(new Continent(i));
+  }
+  
+  for (let i = 0; i < CONFIG.flowParticleCount; i++) {
+    flowParticles.push(new FlowParticle());
+  }
+}
+
+function renderBackground(g) {
+  g.noStroke();
+  let steps = 40;
+  for (let i = 0; i < steps; i++) {
+    let t = i / steps;
+    let h = lerp(18, 8, t);
+    let s = lerp(70, 50, t);
+    let b = lerp(14, 4, t);
+    g.fill(h, s, b);
+    g.rect(0, (i / steps) * g.height, g.width, g.height / steps + 1);
+  }
+  // subtle noise texture
+  for (let i = 0; i < 400; i++) {
+    let x = random(g.width);
+    let y = random(g.height);
+    g.fill(20, 20, random(8, 18), 5);
+    g.circle(x, y, random(2, 5));
+  }
+}
+
+function draw() {
+  background(0);
+  image(bgLayer, 0, 0);
+  
+  for (let p of flowParticles) {
+    p.update();
+    p.display();
+  }
+  
+  for (let c of continents) {
+    c.update();
+  }
+  
+  collideContinents();
+  
+  for (let c of continents) {
+    c.display();
+  }
+}
+
+function collideContinents() {
+  for (let i = 0; i < continents.length; i++) {
+    for (let j = i + 1; j < continents.length; j++) {
+      let a = continents[i], b = continents[j];
+      let overlap = a.radius + b.radius - p5.Vector.dist(a.pos, b.pos);
+      if (overlap > 0) {
+        let force = p5.Vector.sub(a.pos, b.pos).normalize().mult(overlap * 0.02);
+        a.pos.add(force);
+        b.pos.sub(force);
+        a.vel.add(p5.Vector.random2D().mult(0.03));
+        b.vel.add(p5.Vector.random2D().mult(0.03));
+        
+        let mid = p5.Vector.add(a.pos, b.pos).mult(0.5);
+        let burstCount = Math.floor(overlap * 0.5);
+        for (let k = 0; k < burstCount; k++) {
+          let p = p5.Vector.random2D().mult(random(1, 3));
+          flowParticles.push(new FlowParticle(mid.x + p.x * 10, mid.y + p.y * 10, true));
+        }
+        if (flowParticles.length > CONFIG.flowParticleCount + 200) {
+          flowParticles.splice(0, burstCount);
+        }
+      }
+    }
+  }
+}
+
+class Continent {
+  constructor(index) {
+    this.index = index;
+    this.pos = createVector(random(width * 0.2, width * 0.8), random(height * 0.2, height * 0.8));
+    this.vel = p5.Vector.random2D().mult(random(0.1, 0.3));
+    this.radius = random(80, 180);
+    this.color = PALETTE.continentColors[index % PALETTE.continentColors.length];
+    this.glow = PALETTE.continentGlow[index % PALETTE.continentGlow.length];
+    this.points = [];
+    this.noiseOffset = random(1000);
+    this.z = random(0.5, 1.5);
+    this.generateShape();
+  }
+  
+  generateShape() {
+    this.points = [];
+    let n = CONFIG.edgePoints;
+    for (let i = 0; i < n; i++) {
+      let angle = (i / n) * TWO_PI;
+      let r = this.radius * (0.65 + 0.35 * noise(this.noiseOffset + cos(angle) * 1.5, this.noiseOffset + sin(angle) * 1.5));
+      this.points.push({ angle, r });
+    }
+  }
+  
+  update() {
+    this.vel.add(p5.Vector.random2D().mult(0.002));
+    this.vel.mult(0.998);
+    this.vel.limit(0.5);
+    this.pos.add(this.vel);
+    
+    if (this.pos.x < -this.radius) this.pos.x = width + this.radius;
+    if (this.pos.x > width + this.radius) this.pos.x = -this.radius;
+    if (this.pos.y < -this.radius) this.pos.y = height + this.radius;
+    if (this.pos.y > height + this.radius) this.pos.y = -this.radius;
+    
+    this.noiseOffset += 0.0003;
+    this.generateShape();
+  }
+  
+  display() {
+    push();
+    translate(this.pos.x, this.pos.y);
+    
+    beginShape();
+    for (let p of this.points) {
+      let x = cos(p.angle) * p.r;
+      let y = sin(p.angle) * p.r;
+      fill(this.color);
+      stroke(this.glow);
+      strokeWeight(1.5);
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+    
+    drawingContext.save();
+    drawingContext.filter = 'blur(8px)';
+    beginShape();
+    for (let p of this.points) {
+      let x = cos(p.angle) * p.r;
+      let y = sin(p.angle) * p.r;
+      fill(this.glow);
+      stroke(this.glow);
+      strokeWeight(2);
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+    drawingContext.filter = 'none';
+    drawingContext.restore();
+    
+    strokeWeight(1.5);
+    stroke(PALETTE.ridgeLine);
+    noFill();
+    beginShape();
+    for (let p of this.points) {
+      let x = cos(p.angle) * p.r * 0.3;
+      let y = sin(p.angle) * p.r * 0.3;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+    
+    pop();
+  }
+}
+
+function fbm(x, y, octaves) {
+  octaves = octaves || 3;
+  let val = 0, amp = 1, freq = 1, sum = 0;
+  for (let i = 0; i < octaves; i++) {
+    val += noise(x * freq, y * freq) * amp;
+    sum += amp;
+    amp *= 0.5;
+    freq *= 2;
+  }
+  return val / sum;
+}
+
+class FlowParticle {
+  constructor(x, y, burst) {
+    this.pos = createVector(x || random(width), y || random(height));
+    this.vel = p5.Vector.random2D().mult(random(0.3, 0.8));
+    this.life = random(1, 1);
+    this.maxLife = this.life;
+    this.burst = burst || false;
+    this.size = burst ? random(1, 3) : random(0.5, 1.5);
+    this.heat = random(0, 1);
+  }
+  
+  update() {
+    let n = fbm(this.pos.x * 0.002, this.pos.y * 0.002 + frameCount * 0.0001, 3);
+    let angle = n * TWO_PI * 4;
+    let force = p5.Vector.fromAngle(angle).mult(0.06);
+    this.vel.add(force);
+    this.vel.mult(0.985);
+    this.vel.limit(0.8);
+    this.pos.add(this.vel);
+    
+    if (this.burst) {
+      this.life -= 0.015;
+    }
+    
+    if (this.pos.x < 0) this.pos.x = width;
+    if (this.pos.x > width) this.pos.x = 0;
+    if (this.pos.y < 0) this.pos.y = height;
+    if (this.pos.y > height) this.pos.y = 0;
+  }
+  
+  display() {
+    let alpha;
+    if (this.burst) {
+      alpha = map(this.life, 0, this.maxLife, 0, 40);
+      if (this.life <= 0) return;
+    } else {
+      alpha = lerp(6, 18, this.heat);
+    }
+    
+    noStroke();
+    if (this.burst) {
+      fill(40, 20, 95, alpha);
+    } else {
+      fill(PALETTE.flowParticle[0], PALETTE.flowParticle[1], PALETTE.flowParticle[2], alpha);
+    }
+    circle(this.pos.x, this.pos.y, this.size);
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  bgLayer = createGraphics(width, height);
+  bgLayer.colorMode(HSB, 360, 100, 100, 100);
+  renderBackground(bgLayer);
+}
+
+function mousePressed() {
+  CONFIG.seed = Math.floor(random(99999));
+  randomSeed(CONFIG.seed);
+  noiseSeed(CONFIG.seed);
+  continents = [];
+  flowParticles = [];
+  for (let i = 0; i < CONFIG.continentCount; i++) {
+    continents.push(new Continent(i));
+  }
+  for (let i = 0; i < CONFIG.flowParticleCount; i++) {
+    flowParticles.push(new FlowParticle());
+  }
+}
+</script>
+</body>
+</html>
